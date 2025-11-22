@@ -1,101 +1,67 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import plotly.express as px
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import LabelEncoder
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.metrics import mean_squared_error
-import numpy as np
+from sklearn.ensemble import RandomForestClassifier
 
-# -----------------------------------------------------------
-# PAGE CONFIG + CSS STYLING
-# -----------------------------------------------------------
-st.set_page_config(page_title="AI For Indian Farmers", layout="wide")
+# ---------------------------------------------
+# PAGE SETTINGS + CUSTOM CSS
+# ---------------------------------------------
+st.set_page_config(page_title="Indian Farmers Assistant", layout="wide")
 
 st.markdown("""
-<style>
-/* MAIN BACKGROUND */
-body {
-    background-color: #ffffff;
-}
-
-/* SIDEBAR */
-[data-testid="stSidebar"] {
-    background-color: #e8f5e9;
-}
-
-/* HEADER */
-h1, h2, h3 {
-    color: #1b5e20 !important;
-}
-
-/* METRICS */
-.metric {
-    background-color: #f1f8e9 !important;
-    padding: 15px;
-    border-radius: 10px;
-}
-
-/* SELECTBOX LABEL */
-.css-1pahdxg-control {
-    border: 2px solid #2e7d32 !important;
-}
-
-/* BUTTON GREEN THEME */
-.stButton>button {
-    background-color: #2e7d32;
-    color: white;
-    border-radius: 8px;
-    padding: 10px 20px;
-}
-.stButton>button:hover {
-    background-color: #1b5e20;
-    color: white;
-}
-</style>
+    <style>
+        .main {
+            background-color: #ffffff;
+        }
+        .sidebar .sidebar-content {
+            background-color: #e7f7e7;
+        }
+        h1, h2, h3, h4 {
+            color: #1b5e20;
+            font-weight: 700;
+        }
+        .nav-title {
+            font-size: 24px;
+            font-weight: 800;
+            color: #1b5e20;
+            padding-bottom: 15px;
+        }
+    </style>
 """, unsafe_allow_html=True)
 
-# -----------------------------------------------------------
+# ---------------------------------------------
 # LOAD DATA
-# -----------------------------------------------------------
-@st.cache_data
-def load_data():
-    df = pd.read_csv("crop_yield.csv")
-    df.columns = df.columns.str.strip()
-    return df
+# ---------------------------------------------
+df = pd.read_csv("/mnt/data/crop_yield.csv") 
 
-df = load_data()
+# Fix date column if required
+date_col = [c for c in df.columns if "date" in c.lower()]
+if date_col:
+    df[date_col[0]] = pd.to_datetime(df[date_col[0]], errors="coerce")
 
-# -----------------------------------------------------------
+# ---------------------------------------------
 # SIDEBAR NAVIGATION
-# -----------------------------------------------------------
-st.sidebar.title("🌿 Navigation")
-page = st.sidebar.selectbox(
-    "Go to",
-    ["🏠 Home", "📊 Dashboard", "🤖 Yield Prediction", "🌾 Crop Recommendation"]
+# ---------------------------------------------
+st.sidebar.markdown("<div class='nav-title'>Indian Farmers Assistant</div>", unsafe_allow_html=True)
+
+section = st.sidebar.radio(
+    "Select a Section",
+    ["Home", "Analytics Dashboard", "Crop Recommendation AI"]
 )
 
-# -----------------------------------------------------------
+# ---------------------------------------------
 # HOME PAGE
-# -----------------------------------------------------------
-if page == "🏠 Home":
-    st.markdown("<h1>🌱 AI Farming Assistant for Indian Farmers</h1>", unsafe_allow_html=True)
-
-    st.image(
-        "https://wallpapercave.com/wp/wp5627799.jpg",
-        use_column_width=True,
-        caption="Agriculture • India • Sustainability"
-    )
-
-    st.markdown("""
-    ### 🇮🇳 Empowering Indian Farmers with AI  
-    This platform provides:
-    - 📊 **Interactive Agriculture Analytics Dashboard**  
-    - 🤖 **AI-Powered Yield Prediction**  
-    - 🌾 **Smart Crop Recommendation System**  
-    - 🧠 Data insights to support scientific decisions  
+# ---------------------------------------------
+if section == "Home":
+    st.image("https://wallpapercave.com/wp/wp5627799.jpg", use_column_width=True)
+    st.title("🇮🇳 Indian Farmers AI Assistant")
+    st.write("""
+    Welcome to the AI-powered analytics and recommendation system created to support Indian farmers.
+    This platform uses **data analytics**, **machine learning**, and **visual insights** to help farmers 
+    make informed decisions about yield, crops, and farming conditions.
     """)
-
 
 # ---------------------------------------------
 # ANALYTICS DASHBOARD
@@ -174,75 +140,50 @@ elif section == "Analytics Dashboard":
                               title=f"{num_x} vs {num_y}")
             st.plotly_chart(fig2, use_container_width=True)
 
+# ---------------------------------------------
+# CROP RECOMMENDATION AI MODEL
+# ---------------------------------------------
+elif section == "Crop Recommendation AI":
+    st.title("🌾 AI-Powered Crop Recommendation")
 
-# -----------------------------------------------------------
-# YIELD PREDICTION MODEL
-# -----------------------------------------------------------
-if page == "🤖 Yield Prediction":
-    st.header("🤖 AI Model: Crop Yield Prediction")
+    st.write("This model recommends the **best crop** based on farming conditions.")
 
-    df_model = df.copy()
-    le_state = LabelEncoder()
-    le_season = LabelEncoder()
-    le_crop = LabelEncoder()
+    # Auto-detect features for model
+    feature_candidates = ["temperature", "humidity", "rainfall", "ph", "soil_type"]
+    features = [f for f in feature_candidates if f in df.columns]
 
-    df_model["State_enc"] = le_state.fit_transform(df["State"])
-    df_model["Season_enc"] = le_season.fit_transform(df["Season"])
-    df_model["Crop_enc"] = le_crop.fit_transform(df["Crop"])
-
-    X = df_model[["Crop_Year", "Area", "State_enc", "Season_enc", "Crop_enc"]]
-    y = df_model["Production"]
-
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-
-    model = RandomForestRegressor(n_estimators=150)
-    model.fit(X_train, y_train)
-
-    st.subheader("Enter Inputs for Prediction")
-
-    year = st.number_input("Crop Year", min_value=1990, max_value=2050, value=2024)
-    area = st.number_input("Area (ha)", min_value=1.0, value=500.0)
-    state = st.selectbox("State", df["State"].unique())
-    season = st.selectbox("Season", df["Season"].unique())
-    crop = st.selectbox("Crop", df["Crop"].unique())
-
-    if st.button("Predict Yield"):
-        user_input = pd.DataFrame({
-            "Crop_Year": [year],
-            "Area": [area],
-            "State_enc": [le_state.transform([state])[0]],
-            "Season_enc": [le_season.transform([season])[0]],
-            "Crop_enc": [le_crop.transform([crop])[0]],
-        })
-
-        pred = model.predict(user_input)[0]
-        st.success(f"🌾 **Predicted Yield: {pred:,.2f} tonnes**")
-
-        rmse = np.sqrt(mean_squared_error(y_test, model.predict(X_test)))
-        st.info(f"Model RMSE: {rmse:,.2f}")
-
-# -----------------------------------------------------------
-# CROP RECOMMENDATION SYSTEM
-# -----------------------------------------------------------
-if page == "🌾 Crop Recommendation":
-    st.header("🌾 Smart Crop Recommendation")
-
-    state_sel = st.selectbox("Select State", df["State"].unique())
-    season_sel = st.selectbox("Select Season", df["Season"].unique())
-    area_sel = st.number_input("Available Area (ha)", min_value=1.0, value=100.0)
-
-    df_f = df[(df["State"] == state_sel) & (df["Season"] == season_sel)]
-
-    if df_f.empty:
-        st.warning("⚠ No data available for selected filters.")
+    if "crop" not in df.columns:
+        st.error("❌ Dataset must include a 'crop' column for training the model.")
     else:
-        df_f["Productivity"] = df_f["Production"] / df_f["Area"]
+        # Prepare ML data
+        X = df[features].copy()
 
-        top = df_f.groupby("Crop")["Productivity"].mean().sort_values(ascending=False).head(1)
+        # Convert soil_type to numeric if needed
+        if "soil_type" in X.columns:
+            X["soil_type"] = X["soil_type"].astype("category").cat.codes
 
-        recommended_crop = top.index[0]
-        prod_val = top.values[0]
+        y = df["crop"]
 
-        st.success(f"🌟 **Recommended Crop: {recommended_crop}**")
-        st.info(f"Expected Productivity: **{prod_val:.2f} tonnes/ha**")
+        # Train model
+        model = RandomForestClassifier()
+        model.fit(X, y)
 
+        st.subheader("Enter Conditions:")
+        col1, col2, col3 = st.columns(3)
+
+        inputs = {}
+        for f in features:
+            with col1 if len(inputs) % 3 == 0 else col2 if len(inputs) % 3 == 1 else col3:
+                if df[f].dtype == "O":
+                    inputs[f] = st.selectbox(f, df[f].unique())
+                else:
+                    inputs[f] = st.number_input(f, float(df[f].min()), float(df[f].max()), float(df[f].mean()))
+
+        # Convert soil type if applicable
+        if "soil_type" in inputs:
+            inputs["soil_type"] = df["soil_type"].astype("category").cat.categories.get_loc(inputs["soil_type"])
+
+        if st.button("Predict Best Crop"):
+            user_df = pd.DataFrame([inputs])
+            prediction = model.predict(user_df)[0]
+            st.success(f"🌱 Recommended Crop: **{prediction}**")
