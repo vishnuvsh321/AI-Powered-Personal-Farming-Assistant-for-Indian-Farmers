@@ -1,102 +1,55 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
+import plotly.express as px
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import LabelEncoder
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_squared_error
-import plotly.express as px
-import re
+import numpy as np
 
 # -----------------------------------------------------------
-# PAGE CONFIG + CSS (kept simple)
+# PAGE CONFIG + CSS
 # -----------------------------------------------------------
 st.set_page_config(page_title="AI For Indian Farmers", layout="wide")
 
 st.markdown("""
 <style>
-/* MAIN BACKGROUND */
-body {
-    background-color: #ffffff;
-}
-
-/* SIDEBAR */
 [data-testid="stSidebar"] {
     background-color: #e8f5e9;
 }
-
-/* HEADER */
 h1, h2, h3 {
     color: #1b5e20 !important;
 }
-
-/* BUTTON GREEN THEME */
 .stButton>button {
     background-color: #2e7d32;
     color: white;
     border-radius: 8px;
-    padding: 10px 20px;
 }
 .stButton>button:hover {
     background-color: #1b5e20;
-    color: white;
 }
 </style>
 """, unsafe_allow_html=True)
 
 # -----------------------------------------------------------
-# LOAD + CLEAN DATA
+# LOAD CLEANED DATA
 # -----------------------------------------------------------
 @st.cache_data
-def load_and_clean(path="/mnt/data/crop_yield.csv"):
-    df = pd.read_csv(path)
-    # normalize column names
-    df.columns = df.columns.str.strip()
+def load_data():
+    df = pd.read_csv("crop_yields.csv")
 
-    # utility to extract numeric (keeps decimals). removes commas and units like ' tonnes'
-    def to_numeric_clean(series):
-        s = series.astype(str).str.replace(",", "")
-        # extract first number
-        extracted = s.str.extract(r'([-+]?\d*\.?\d+)', expand=False)
-        return pd.to_numeric(extracted, errors="coerce")
+    # Ensure numeric
+    df["Area"] = pd.to_numeric(df["Area"], errors="coerce")
+    df["Production"] = pd.to_numeric(df["Production"], errors="coerce")
+    df["Yield"] = pd.to_numeric(df["Yield"], errors="coerce")
 
-    # Clean common numeric columns if they exist
-    for col in ["Production", "Area", "Annual_Rainfall", "Fertilizer", "Pesticide", "Yield", "Yield(tn/ha)"]:
-        if col in df.columns:
-            df[col] = to_numeric_clean(df[col])
+    df = df.dropna(subset=["Area", "Production", "Yield"])
 
-    # prefer 'Yield' if available; unify names
-    if "Yield(tn/ha)" in df.columns and "Yield" not in df.columns:
-        df.rename(columns={"Yield(tn/ha)": "Yield"}, inplace=True)
-
-    # If Production is missing but Yield exists and Area exists, compute Production = Yield * Area
-    if ("Production" not in df.columns or df["Production"].isna().all()) and ("Yield" in df.columns and "Area" in df.columns):
-        df["Production"] = df["Yield"] * df["Area"]
-
-    # drop rows missing essential columns
-    required = ["Crop", "Crop_Year", "Area", "Production", "State", "Season"]
-    required = [c for c in required if c in df.columns]
-    df = df.dropna(subset=required)
-
-    # Remove extreme outliers in Production using IQR (helps stability)
-    if "Production" in df.columns:
-        Q1 = df["Production"].quantile(0.25)
-        Q3 = df["Production"].quantile(0.75)
-        IQR = Q3 - Q1
-        lower = Q1 - 1.5 * IQR
-        upper = Q3 + 1.5 * IQR
-        # if IQR is zero (bad), skip filtering
-        if IQR > 0:
-            df = df[(df["Production"] >= lower) & (df["Production"] <= upper)]
-
-    # Reset index
-    df = df.reset_index(drop=True)
     return df
 
-df = load_and_clean("/mnt/data/crop_yield.csv")
+df = load_data()
 
 # -----------------------------------------------------------
-# SIDEBAR + Navigation (kept same)
+# SIDEBAR
 # -----------------------------------------------------------
 st.sidebar.title("🌿 Navigation")
 page = st.sidebar.selectbox(
@@ -105,17 +58,20 @@ page = st.sidebar.selectbox(
 )
 
 # -----------------------------------------------------------
-# HOME
+# HOME PAGE
 # -----------------------------------------------------------
 if page == "🏠 Home":
-    st.markdown("<h1>🌱 AI Farming Assistant for Indian Farmers</h1>", unsafe_allow_html=True)
-    st.image("https://wallpapercave.com/wp/wp5627799.jpg", use_column_width=True, caption="Agriculture • India • Sustainability")
-    st.markdown("""
-    ### 🇮🇳 Empowering Indian Farmers with AI  
+    st.header("🌱 AI Farming Assistant for Indian Farmers")
+    st.image(
+        "https://wallpapercave.com/wp/wp5627799.jpg",
+        use_column_width=True,
+    )
+    st.write("""
+    ### 🇮🇳 Empowering Farmers with AI  
     This platform provides:
-    - 📊 **Interactive Agriculture Analytics Dashboard**  
-    - 🤖 **AI-Powered Yield/Production Prediction**  
-    - 🌾 **Smart Crop Recommendation System**
+    - 📊 Agriculture Analytics Dashboard  
+    - 🤖 AI-Based Yield Prediction  
+    - 🌾 Smart Crop Recommendation  
     """)
 
 # -----------------------------------------------------------
@@ -124,209 +80,123 @@ if page == "🏠 Home":
 if page == "📊 Dashboard":
     st.header("📊 Agriculture Analytics Dashboard")
 
-    # Filters
-    st.subheader("🔍 Filters")
-    colA, colB, colC, colD = st.columns(4)
-
-    with colA:
-        crop_filter = st.selectbox("Crop", ["All"] + sorted(df["Crop"].unique()))
-    with colB:
-        state_filter = st.selectbox("State", ["All"] + sorted(df["State"].unique()))
-    with colC:
-        season_filter = st.selectbox("Season", ["All"] + sorted(df["Season"].unique()))
-    with colD:
-        year_filter = st.selectbox("Year", ["All"] + sorted(df["Crop_Year"].unique()))
-
-    df_filtered = df.copy()
-    if crop_filter != "All":
-        df_filtered = df_filtered[df_filtered["Crop"] == crop_filter]
-    if state_filter != "All":
-        df_filtered = df_filtered[df_filtered["State"] == state_filter]
-    if season_filter != "All":
-        df_filtered = df_filtered[df_filtered["Season"] == season_filter]
-    if year_filter != "All":
-        df_filtered = df_filtered[df_filtered["Crop_Year"] == year_filter]
-
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     with col1:
-        st.metric("Total Production (tonnes)", f"{df_filtered['Production'].sum():,.0f}")
+        crop_f = st.selectbox("Crop", ["All"] + sorted(df["Crop"].unique()))
     with col2:
-        st.metric("Total Cultivated Area (ha)", f"{df_filtered['Area'].sum():,.0f}")
+        state_f = st.selectbox("State", ["All"] + sorted(df["State"].unique()))
     with col3:
-        st.metric("Unique Crops", df_filtered["Crop"].nunique())
+        season_f = st.selectbox("Season", ["All"] + sorted(df["Season"].unique()))
+    with col4:
+        year_f = st.selectbox("Year", ["All"] + sorted(df["Crop_Year"].unique()))
 
+    df_f = df.copy()
+
+    if crop_f != "All": df_f = df_f[df_f["Crop"] == crop_f]
+    if state_f != "All": df_f = df_f[df_f["State"] == state_f]
+    if season_f != "All": df_f = df_f[df_f["Season"] == season_f]
+    if year_f != "All": df_f = df_f[df_f["Crop_Year"] == year_f]
+
+    # Metrics
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Total Production", f"{df_f['Production'].sum():,.0f} tonnes")
+    c2.metric("Total Area", f"{df_f['Area'].sum():,.0f} ha")
+    c3.metric("Unique Crops", df_f["Crop"].nunique())
+
+    # Charts
     st.subheader("Crop-wise Production")
-    prod_by_crop = df_filtered.groupby("Crop")["Production"].sum().sort_values(ascending=False).reset_index()
-    fig1 = px.bar(prod_by_crop, x="Crop", y="Production", title="Crop Production by Type")
-    st.plotly_chart(fig1, use_container_width=True)
+    fig = px.bar(df_f.groupby("Crop")["Production"].sum())
+    st.plotly_chart(fig, use_container_width=True)
 
     st.subheader("State-wise Production")
-    fig2 = px.bar(df_filtered.groupby("State")["Production"].sum().reset_index(), x="State", y="Production", title="Production by State")
+    fig2 = px.bar(df_f.groupby("State")["Production"].sum())
     st.plotly_chart(fig2, use_container_width=True)
 
-    st.subheader("Trend Over Years")
-    fig3 = px.line(df_filtered.groupby("Crop_Year")["Production"].sum().reset_index(), x="Crop_Year", y="Production", title="Production Over Years")
+    st.subheader("Yearly Trend")
+    fig3 = px.line(df_f.groupby("Crop_Year")["Production"].sum().reset_index(),
+                   x="Crop_Year", y="Production")
     st.plotly_chart(fig3, use_container_width=True)
 
 # -----------------------------------------------------------
-# YIELD / PRODUCTION PREDICTION (CLEAN + CACHED)
+# YIELD PREDICTION MODEL
 # -----------------------------------------------------------
 if page == "🤖 Yield Prediction":
-    st.header("🤖 AI Model: Production Prediction (cleaned & stable)")
+    st.header("🤖 AI Model: Crop Yield Prediction")
 
-    # TRAINING (cached so it doesn't retrain on every rerun)
-    @st.cache_resource
-    def train_model(df_local):
-        df_m = df_local.copy()
+    df_model = df.copy()
 
-        # Create log features to stabilize scale
-        df_m["Area_log"] = np.log1p(df_m["Area"])
-        df_m["Prod_log"] = np.log1p(df_m["Production"])
+    # One-hot encode
+    df_model = pd.get_dummies(df_model, columns=["State", "Season", "Crop"], drop_first=True)
 
-        # Use additional numeric features if present (cleaned earlier)
-        extras = []
-        for c in ["Annual_Rainfall", "Fertilizer", "Pesticide"]:
-            if c in df_m.columns:
-                df_m[c] = df_m[c].fillna(df_m[c].median())
-                extras.append(c)
+    X = df_model.drop(columns=["Yield"])
+    y = df_model["Yield"]
 
-        # Label encode categorical columns (keeps model similar to your original)
-        le_state = LabelEncoder()
-        le_season = LabelEncoder()
-        le_crop = LabelEncoder()
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.2, random_state=42
+    )
 
-        df_m["State_enc"] = le_state.fit_transform(df_m["State"].astype(str))
-        df_m["Season_enc"] = le_season.fit_transform(df_m["Season"].astype(str))
-        df_m["Crop_enc"] = le_crop.fit_transform(df_m["Crop"].astype(str))
+    model = RandomForestRegressor(
+        n_estimators=300,
+        max_depth=None,
+        random_state=42
+    )
+    model.fit(X_train, y_train)
 
-        # Build feature matrix — keep it simple and robust
-        feature_cols = ["Crop_Year", "Area_log", "State_enc", "Season_enc", "Crop_enc"] + extras
-        X = df_m[feature_cols]
-        y = df_m["Prod_log"]  # log-target
+    st.subheader("Enter Inputs")
 
-        # Train/test
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    year = st.number_input("Crop Year", min_value=1990, max_value=2050, value=2024)
+    area = st.number_input("Area (ha)", min_value=0.1, value=100.0)
+    state = st.selectbox("State", df["State"].unique())
+    season = st.selectbox("Season", df["Season"].unique())
+    crop = st.selectbox("Crop", df["Crop"].unique())
 
-        # Random Forest
-        model = RandomForestRegressor(
-            n_estimators=300,
-            max_depth=20,
-            min_samples_leaf=2,
-            n_jobs=-1,
-            random_state=42
-        )
-        model.fit(X_train, y_train)
-
-        # return model + encoders + feature list + test sets for RMSE
-        return {
-            "model": model,
-            "feature_cols": feature_cols,
-            "le_state": le_state,
-            "le_season": le_season,
-            "le_crop": le_crop,
-            "X_test": X_test,
-            "y_test": y_test
+    if st.button("Predict Yield"):
+        # Build input row
+        user = {
+            "Crop_Year": year,
+            "Area": area,
+            "Production": 0   # placeholder, not used in prediction
         }
 
-    state = st.selectbox("Select model training subset (quick check)", ["Full dataset"], index=0)
+        for s in df_model.columns:
+            if s.startswith("State_"):
+                user[s] = 1 if s == f"State_{state}" else 0
+            elif s.startswith("Season_"):
+                user[s] = 1 if s == f"Season_{season}" else 0
+            elif s.startswith("Crop_"):
+                user[s] = 1 if s == f"Crop_{crop}" else 0
 
-    # Train (cached)
-    resources = train_model(df)
-    model = resources["model"]
-    feature_cols = resources["feature_cols"]
-    le_state = resources["le_state"]
-    le_season = resources["le_season"]
-    le_crop = resources["le_crop"]
-    X_test = resources["X_test"]
-    y_test = resources["y_test"]
+        # Missing columns (for safety)
+        for col in X.columns:
+            if col not in user:
+                user[col] = 0
 
-    # Show training RMSE (converted back to real scale)
-    y_pred_test_log = model.predict(X_test)
-    y_pred_test_real = np.expm1(y_pred_test_log)
-    y_test_real = np.expm1(y_test)
-    train_rmse = np.sqrt(mean_squared_error(y_test_real, y_pred_test_real))
-    st.info(f"Model RMSE (real scale): {train_rmse:,.2f} tonnes")
+        user_df = pd.DataFrame([user])[X.columns]
 
-    st.subheader("Enter Inputs for Prediction")
+        pred = model.predict(user_df)[0]
 
-    # Input widgets
-    year = st.number_input("Crop Year", min_value=int(df["Crop_Year"].min()), max_value=int(df["Crop_Year"].max()), value=int(df["Crop_Year"].max()))
-    area = st.number_input("Area (ha)", min_value=0.0, value=float(df["Area"].median()))
-    state_in = st.selectbox("State", df["State"].unique())
-    season_in = st.selectbox("Season", df["Season"].unique())
-    crop_in = st.selectbox("Crop", df["Crop"].unique())
+        st.success(f"🌾 Predicted Yield: **{pred:,.2f} tonnes/ha**")
 
-    # If extras exist, show them
-    extras_input = {}
-    for c in ["Annual_Rainfall", "Fertilizer", "Pesticide"]:
-        if c in df.columns:
-            default = float(df[c].median())
-            extras_input[c] = st.number_input(c, value=default)
-
-    # Safe transform helper for encoders (unknown values -> fallback to most common)
-    def safe_transform(le, value):
-        try:
-            return int(le.transform([value])[0])
-        except Exception:
-            # fallback: map to mode (most frequent) if unseen
-            classes = list(le.classes_)
-            return int(np.where(classes == classes[0], 0, 0)[0]) if len(classes) > 0 else 0
-
-    # Build user feature vector matching feature_cols
-    user_row = {}
-    for col in feature_cols:
-        if col == "Crop_Year":
-            user_row[col] = year
-        elif col == "Area_log":
-            user_row[col] = np.log1p(area)
-        elif col == "State_enc":
-            user_row[col] = safe_transform(le_state, state_in)
-        elif col == "Season_enc":
-            user_row[col] = safe_transform(le_season, season_in)
-        elif col == "Crop_enc":
-            user_row[col] = safe_transform(le_crop, crop_in)
-        elif col in extras_input:
-            user_row[col] = extras_input[col]
-        else:
-            user_row[col] = 0
-
-    user_df = pd.DataFrame([user_row], columns=feature_cols)
-
-    if st.button("Predict Production"):
-        # Predict in log space, convert back
-        pred_log = model.predict(user_df)[0]
-        pred_real = np.expm1(pred_log)
-        st.success(f"🌾 **Predicted Production: {pred_real:,.2f} tonnes**")
-
-        # Show per-hectare yield as bonus if area >0
-        if area > 0:
-            yield_per_ha = pred_real / area
-            st.info(f"Estimated Yield: {yield_per_ha:,.4f} tonnes/ha")
-
-        # Show feature importances (top 8)
-        importances = model.feature_importances_
-        fi = pd.DataFrame({"feature": feature_cols, "importance": importances}).sort_values("importance", ascending=False).head(8)
-        fig = px.bar(fi, x="importance", y="feature", orientation='h', title="Top feature importances")
-        st.plotly_chart(fig, use_container_width=True)
+        rmse = mean_squared_error(y_test, model.predict(X_test), squared=False)
+        st.info(f"Model RMSE: **{rmse:,.2f}**")
 
 # -----------------------------------------------------------
-# CROP RECOMMENDATION (unchanged but robust)
+# CROP RECOMMENDATION
 # -----------------------------------------------------------
 if page == "🌾 Crop Recommendation":
     st.header("🌾 Smart Crop Recommendation")
 
-    state_sel = st.selectbox("Select State", df["State"].unique())
-    season_sel = st.selectbox("Select Season", df["Season"].unique())
-    area_sel = st.number_input("Available Area (ha)", min_value=1.0, value=100.0)
+    sel_state = st.selectbox("Select State", df["State"].unique())
+    sel_season = st.selectbox("Select Season", df["Season"].unique())
 
-    df_f = df[(df["State"] == state_sel) & (df["Season"] == season_sel)]
+    df_r = df[(df["State"] == sel_state) & (df["Season"] == sel_season)]
 
-    if df_f.empty:
-        st.warning("⚠ No data available for selected filters.")
+    if df_r.empty:
+        st.warning("No data available for this combination.")
     else:
-        df_f["Productivity"] = df_f["Production"] / df_f["Area"]
-        top = df_f.groupby("Crop")["Productivity"].mean().sort_values(ascending=False).head(1)
-        recommended_crop = top.index[0]
-        prod_val = top.values[0]
-        st.success(f"🌟 **Recommended Crop: {recommended_crop}**")
-        st.info(f"Expected Productivity: **{prod_val:.2f} tonnes/ha**")
+        df_r["Productivity"] = df_r["Production"] / df_r["Area"]
+        best = df_r.groupby("Crop")["Productivity"].mean().idxmax()
+        val = df_r.groupby("Crop")["Productivity"].mean().max()
+
+        st.success(f"🌟 Recommended Crop: **{best}**")
+        st.info(f"Expected Productivity: **{val:.2f} tonnes/ha**")
