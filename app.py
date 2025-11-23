@@ -163,99 +163,76 @@ if page == "📊 Dashboard":
     st.plotly_chart(fig3, use_container_width=True)
 
 # -----------------------------------------------------------
-# YIELD PREDICTION MODEL (CONSTANT OUTPUT FIXED)
+# YIELD PREDICTION MODEL  (REDUCED RMSE VERSION)
 # -----------------------------------------------------------
 if page == "🤖 Yield Prediction":
     st.header("🤖 AI Model: Crop Yield Prediction")
 
-    @st.cache_resource
-    def train_yield_model(df):
-        df_m = df.copy()
+    df_model = df.copy()
+    
+    # Encode categorical features
+    le_state = LabelEncoder()
+    le_season = LabelEncoder()
+    le_crop = LabelEncoder()
 
-        # OUTLIER REMOVAL
-        Q1 = df_m["Production"].quantile(0.25)
-        Q3 = df_m["Production"].quantile(0.75)
-        IQR = Q3 - Q1
-        df_m = df_m[(df_m["Production"] >= Q1 - 1.5*IQR) &
-                    (df_m["Production"] <= Q3 + 1.5*IQR)]
+    df_model["State_enc"] = le_state.fit_transform(df_model["State"])
+    df_model["Season_enc"] = le_season.fit_transform(df_model["Season"])
+    df_model["Crop_enc"] = le_crop.fit_transform(df_model["Crop"])
 
-        # REMOVE Yield — DO NOT USE IT AS A FEATURE
-        # ADD LOG AREA
-        df_m["Area_log"] = np.log1p(df_m["Area"])
+    # ✔ NEW: Log-transform huge numeric columns
+    df_model["Area_log"] = np.log1p(df_model["Area"])
+    df_model["Prod_log"] = np.log1p(df_model["Production"])
 
-        # ONE HOT ENCODING
-        df_m = pd.get_dummies(df_m, columns=["State", "Season", "Crop"], drop_first=False)
+    # Features
+    X = df_model[["Crop_Year", "Area_log", "State_enc", "Season_enc", "Crop_enc"]]
+    y = df_model["Prod_log"]   # log targets reduce RMSE massively
 
-        # FEATURES (no Production, no Yield, no Area)
-        X = df_m.drop(["Production", "Area"], axis=1)
+    # Train-test split
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.2, random_state=42
+    )
 
-        # TARGET
-        y = np.log1p(df_m["Production"])
+    # Random Forest model
+    model = RandomForestRegressor(
+        n_estimators=200,
+        max_depth=18,
+        min_samples_split=4,
+        min_samples_leaf=2,
+        random_state=42,
+        n_jobs=-1
+    )
 
-        from sklearn.model_selection import train_test_split
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=0.2, random_state=42
-        )
+    model.fit(X_train, y_train)
 
-        from sklearn.ensemble import RandomForestRegressor
-        model = RandomForestRegressor(
-            n_estimators=400,
-            max_depth=18,
-            min_samples_split=4,
-            min_samples_leaf=2,
-            n_jobs=-1,
-            random_state=42
-        )
+    # Input fields
+    st.subheader("Enter Inputs for Prediction")
 
-        model.fit(X_train, y_train)
-        return model, X, X_test, y_test
-
-    # Train once
-    model, X, X_test, y_test = train_yield_model(df)
-
-    # ---- User Input ----
     year = st.number_input("Crop Year", min_value=1990, max_value=2050, value=2024)
     area = st.number_input("Area (ha)", min_value=1.0, value=500.0)
     state = st.selectbox("State", df["State"].unique())
     season = st.selectbox("Season", df["Season"].unique())
     crop = st.selectbox("Crop", df["Crop"].unique())
 
-    # BUILD USER INPUT
-    user_input = {}
-
-    for col in X.columns:
-        if col == "Crop_Year":
-            user_input[col] = year
-        elif col == "Area_log":
-            user_input[col] = np.log1p(area)
-
-        elif col.startswith("State_"):
-            user_input[col] = 1 if col == f"State_{state}" else 0
-
-        elif col.startswith("Season_"):
-            user_input[col] = 1 if col == f"Season_{season}" else 0
-
-        elif col.startswith("Crop_"):
-            user_input[col] = 1 if col == f"Crop_{crop}" else 0
-
-        else:
-            user_input[col] = 0
-
-    # Make sure order matches training columns
-    user_df = pd.DataFrame([user_input])[X.columns]
-
     if st.button("Predict Yield"):
-        log_pred = model.predict(user_df)[0]
-        pred = np.expm1(log_pred)
+        user_input = pd.DataFrame({
+            "Crop_Year": [year],
+            "Area_log": [np.log1p(area)],
+            "State_enc": [le_state.transform([state])[0]],
+            "Season_enc": [le_season.transform([season])[0]],
+            "Crop_enc": [le_crop.transform([crop])[0]],
+        })
 
-        st.success(f"🌾 Predicted Yield: {pred:,.2f} tonnes")
+        pred_log = model.predict(user_input)[0]
+        pred_real = np.expm1(pred_log)  # convert back from log scale
 
-        # RMSE
-        from sklearn.metrics import mean_squared_error
+        st.success(f"🌾 **Predicted Yield: {pred_real:,.2f} tonnes**")
+
+        # RMSE (converted back to real scale)
+        y_pred_test_log = model.predict(X_test)
+        y_pred_test_real = np.expm1(y_pred_test_log)
         y_test_real = np.expm1(y_test)
-        y_pred_real = np.expm1(model.predict(X_test))
-        rmse = np.sqrt(mean_squared_error(y_test_real, y_pred_real))
 
+        rmse = np.sqrt(mean_squared_error(y_test_real, y_pred_test_real))
         st.info(f"Model RMSE: {rmse:,.2f}")
 
 # -----------------------------------------------------------
