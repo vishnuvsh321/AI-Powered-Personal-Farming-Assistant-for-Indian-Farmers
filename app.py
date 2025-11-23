@@ -13,7 +13,7 @@ from sklearn.metrics import mean_squared_error
 # -------------------------------
 @st.cache_data
 def load_data():
-    df = pd.read_csv("/mnt/data/crop_yields.csv")
+    df = pd.read_csv("crop_yields.csv")
     return df
 
 df = load_data()
