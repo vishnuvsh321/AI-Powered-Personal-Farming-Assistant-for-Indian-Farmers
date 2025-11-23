@@ -163,45 +163,61 @@ if page == "📊 Dashboard":
     st.plotly_chart(fig3, use_container_width=True)
 
 # -----------------------------------------------------------
-# YIELD PREDICTION MODEL (OPTIMIZED)
+# FAST YIELD PREDICTION MODEL (CACHED)
 # -----------------------------------------------------------
 if page == "🤖 Yield Prediction":
     st.header("🤖 AI Model: Crop Yield Prediction")
 
-    # -------- CLEAN DATA --------
-    df_model = df.copy()
+    # -------- TRAIN MODEL ONLY ONCE (CACHED) --------
+    @st.cache_resource
+    def train_model(df):
 
-    # REMOVE OUTLIERS USING IQR
-    Q1 = df_model["Production"].quantile(0.25)
-    Q3 = df_model["Production"].quantile(0.75)
-    IQR = Q3 - Q1
-    df_model = df_model[(df_model["Production"] >= Q1 - 1.5 * IQR) &
-                        (df_model["Production"] <= Q3 + 1.5 * IQR)]
+        df_model = df.copy()
 
-    # FEATURE ENGINEERING
-    df_model["Yield"] = df_model["Production"] / df_model["Area"]
+        # Remove outliers
+        Q1 = df_model["Production"].quantile(0.25)
+        Q3 = df_model["Production"].quantile(0.75)
+        IQR = Q3 - Q1
+        df_model = df_model[(df_model["Production"] >= Q1 - 1.5 * IQR) &
+                            (df_model["Production"] <= Q3 + 1.5 * IQR)]
 
-    # ONE-HOT ENCODE CATEGORICALS
-    df_model = pd.get_dummies(df_model, columns=["State", "Season", "Crop"], drop_first=True)
+        # Feature engineering
+        df_model["Yield"] = df_model["Production"] / df_model["Area"]
 
-    # FEATURES & TARGET
-    X = df_model.drop(["Production"], axis=1)
-    y = np.log1p(df_model["Production"])       # LOG-TRANSFORM TARGET
+        # One-hot encode
+        df_model = pd.get_dummies(df_model, columns=["State", "Season", "Crop"], drop_first=True)
 
-    # TRAIN TEST SPLIT
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+        # Features & target
+        X = df_model.drop("Production", axis=1)
+        y = np.log1p(df_model["Production"])
 
-    # -------- TRAIN XGBOOST MODEL --------
-    from xgboost import XGBRegressor
-    model = XGBRegressor(
-        n_estimators=500,
-        learning_rate=0.05,
-        max_depth=8,
-        subsample=0.8,
-        colsample_bytree=0.8,
-        random_state=42
-    )
-    model.fit(X_train, y_train)
+        # Train-test split
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=0.2, random_state=42
+        )
+
+        # Fast RandomForest
+        from sklearn.ensemble import RandomForestRegressor
+        model = RandomForestRegressor(
+            n_estimators=300,      # reduced for speed
+            max_depth=20,
+            min_samples_split=4,
+            min_samples_leaf=2,
+            random_state=42
+        )
+
+        model.fit(X_train, y_train)
+
+        # Store RMSE (real scale)
+        y_test_real = np.expm1(y_test)
+        y_pred_real = np.expm1(model.predict(X_test))
+        rmse = np.sqrt(mean_squared_error(y_test_real, y_pred_real))
+
+        return model, X.columns, rmse
+
+
+    # Load cached model
+    model, feature_cols, rmse = train_model(df)
 
     # -------- USER INPUT FORM --------
     st.subheader("Enter Inputs for Prediction")
@@ -212,41 +228,30 @@ if page == "🤖 Yield Prediction":
     season = st.selectbox("Season", df["Season"].unique())
     crop = st.selectbox("Crop", df["Crop"].unique())
 
-    # BUILD USER INPUT ROW
-    user_input = {
-        "Crop_Year": year,
-        "Area": area,
-        "Yield": 0   # dummy, model will compute log-production anyway
-    }
+    # Prepare user row
+    user_input = {col: 0 for col in feature_cols}
+    user_input["Crop_Year"] = year
+    user_input["Area"] = area
+    user_input["Yield"] = 0  # dummy
 
-    # ADD ONE-HOT COLUMNS
-    for col in X.columns:
-        if col.startswith("State_"):
-            user_input[col] = 1 if col == f"State_{state}" else 0
-        elif col.startswith("Season_"):
-            user_input[col] = 1 if col == f"Season_{season}" else 0
-        elif col.startswith("Crop_"):
-            user_input[col] = 1 if col == f"Crop_{crop}" else 0
+    # Match one-hot encoding
+    if f"State_{state}" in user_input:
+        user_input[f"State_{state}"] = 1
 
-    # Add any missing columns (safety)
-    for col in X.columns:
-        if col not in user_input:
-            user_input[col] = 0
+    if f"Season_{season}" in user_input:
+        user_input[f"Season_{season}"] = 1
 
-    user_df = pd.DataFrame([user_input])[X.columns]
+    if f"Crop_{crop}" in user_input:
+        user_input[f"Crop_{crop}"] = 1
 
-    # -------- PREDICTION BUTTON --------
+    user_df = pd.DataFrame([user_input])
+
+    # -------- PREDICT --------
     if st.button("Predict Yield"):
-        log_pred = model.predict(user_df)[0]          # prediction in log space
-        pred = np.expm1(log_pred)                     # convert back to tonnes
+        log_pred = model.predict(user_df)[0]
+        pred = np.expm1(log_pred)
 
         st.success(f"🌾 **Predicted Yield: {pred:,.2f} tonnes**")
-
-        # RMSE in real scale
-        y_test_real = np.expm1(y_test)
-        y_pred_real = np.expm1(model.predict(X_test))
-
-        rmse = np.sqrt(mean_squared_error(y_test_real, y_pred_real))
         st.info(f"Model RMSE: {rmse:,.2f}")
 
 # -----------------------------------------------------------
