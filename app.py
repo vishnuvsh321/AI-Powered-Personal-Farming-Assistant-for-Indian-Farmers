@@ -58,7 +58,7 @@ h1, h2, h3 {
 # -----------------------------------------------------------
 # LOAD DATA (uses cleaned file you provided)
 # -----------------------------------------------------------
-DATA_PATH = "/mnt/data/crop_yields.csv"  # using the uploaded cleaned file path
+DATA_PATH = "crop_yields.csv"  # using the uploaded cleaned file path
 
 @st.cache_data
 def load_data(path=DATA_PATH):
