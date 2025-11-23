@@ -163,7 +163,7 @@ if page == "📊 Dashboard":
     st.plotly_chart(fig3, use_container_width=True)
 
 # -----------------------------------------------------------
-# YIELD PREDICTION MODEL (FAST — CACHED RANDOM FOREST)
+# YIELD PREDICTION MODEL (FAST + FIXED ONE-HOT ENCODING)
 # -----------------------------------------------------------
 if page == "🤖 Yield Prediction":
     st.header("🤖 AI Model: Crop Yield Prediction")
@@ -184,15 +184,19 @@ if page == "🤖 Yield Prediction":
         df_m["Yield"] = df_m["Production"] / df_m["Area"]
 
         # ONE HOT ENCODING
-        df_m = pd.get_dummies(df_m, columns=["State", "Season", "Crop"], drop_first=True)
+        df_m = pd.get_dummies(df_m, columns=["State", "Season", "Crop"], drop_first=False)
 
+        # FEATURES & TARGET
         X = df_m.drop(["Production"], axis=1)
-        y = np.log1p(df_m["Production"])  # log target
+        y = np.log1p(df_m["Production"])
 
+        # SPLIT
+        from sklearn.model_selection import train_test_split
         X_train, X_test, y_train, y_test = train_test_split(
             X, y, test_size=0.2, random_state=42
         )
 
+        # RANDOM FOREST MODEL
         from sklearn.ensemble import RandomForestRegressor
         model = RandomForestRegressor(
             n_estimators=400,
@@ -218,34 +222,47 @@ if page == "🤖 Yield Prediction":
     season = st.selectbox("Season", df["Season"].unique())
     crop = st.selectbox("Crop", df["Crop"].unique())
 
-    # BUILD USER INPUT VECTOR
-    user_input = {"Crop_Year": year, "Area": area, "Yield": 0}
+    # -------- BUILD USER INPUT EXACTLY MATCHING X --------
+    user_input = {}
 
     for col in X.columns:
-        if col.startswith("State_"):
+
+        # 1. Numerical columns
+        if col == "Crop_Year":
+            user_input[col] = year
+        elif col == "Area":
+            user_input[col] = area
+        elif col == "Yield":
+            user_input[col] = 0  # placeholder
+
+        # 2. One-hot encoded category columns
+        elif col.startswith("State_"):
             user_input[col] = 1 if col == f"State_{state}" else 0
         elif col.startswith("Season_"):
             user_input[col] = 1 if col == f"Season_{season}" else 0
         elif col.startswith("Crop_"):
             user_input[col] = 1 if col == f"Crop_{crop}" else 0
 
-    # fill missing columns
-    for col in X.columns:
-        user_input.setdefault(col, 0)
+        # 3. Any other column (fallback)
+        else:
+            user_input[col] = 0
 
-    user_df = pd.DataFrame([user_input])[X.columns]
+    # Final user dataframe (correct alignment)
+    user_df = pd.DataFrame([user_input], columns=X.columns)
 
     # -------- PREDICT --------
     if st.button("Predict Yield"):
         log_pred = model.predict(user_df)[0]
-        pred = np.expm1(log_pred)
+        pred = np.expm1(log_pred)  # inverse log-transform
 
         st.success(f"🌾 **Predicted Yield: {pred:,.2f} tonnes**")
 
         # REAL RMSE
+        from sklearn.metrics import mean_squared_error
         y_test_real = np.expm1(y_test)
         y_pred_real = np.expm1(model.predict(X_test))
         rmse = np.sqrt(mean_squared_error(y_test_real, y_pred_real))
+
         st.info(f"Model RMSE: {rmse:,.2f}")
 
 # -----------------------------------------------------------
